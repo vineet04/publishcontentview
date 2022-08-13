@@ -1,14 +1,32 @@
+
+########################################
+#Script to automatically publish RHEL 7#
+#content view and promote each         #
+#life cycle environment                #
+#Author:Vineet Sinha                   #
+########################################
+
 #!/usr/bin/python
 import sys
 import requests
 import json
 import subprocess
 import time
-import config
+from decrypt import *
 
+#decrypt config file
+dec()
+
+#import now config module
+import config
 USERNAME=config.username
 PASSWORD=config.password
 BASEURL=config.url
+
+#encrypt config file back
+from encrypt import *
+enc()
+
 APIURL="/katello/api/content_views"
 RHEL="RHEL_Server_7"
 STATE="running"
