@@ -1,47 +1,82 @@
-
-########################################
-#Script to automatically publish RHEL 7#
-#content view and promote each         #
-#life cycle environment                #
-#Author:Vineet Sinha                   #
-########################################
-
 #!/usr/bin/python
+
+#########################################################################
+#Script to automatically publish RHEL 7                                 #
+#content view and promote each                                          #
+#life cycle environment                                                 #
+#Author:Vineet Sinha                                                    #
+#Modified: 30/08/2022 : Added fix for encryption and check for api call #
+#########################################################################
+
 import sys
 import requests
 import json
 import subprocess
 import time
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+from encrypt import *
+
+# Encryption fix
+def check_for_encrypt():
+    with open('/home/satellite/scripts/config.py') as r:
+         if 'password' in r.read():
+             enc()
+             print "\n \t \t Config file was not encrypted but now encrypted successfully."
+         else:
+             print "\n \t \t Config file already encrypted. No action required."
+             pass
+
+check_for_encrypt()
+
 from decrypt import *
-
-#decrypt config file
 dec()
+print "\n \t \t File decrypted for assigning variables"
 
-#import now config module
+# import now config module
 import config
-USERNAME=config.username
-PASSWORD=config.password
+username=config.username
+password=config.password
 BASEURL=config.url
 
 #encrypt config file back
-from encrypt import *
 enc()
+print "\n \t \t File encrypted back successfully"
 
 APIURL="/katello/api/content_views"
 RHEL="RHEL_Server_7"
 STATE="running"
+exit_code = 1
+request_headers = {'Content-Type': 'application/json'}
+
+## api function call
+def call_api(request_url,request_type="GET",params=None):
+    if request_type == "POST":
+       response = requests.post(request_url, auth=(username, password), verify=False, headers=request_headers, params=params)
+       if response.ok:
+            print "\n \t \t POST api call succeeded"
+       else:
+            print response.json()
+            exit(exit_code)
+    else:
+       response = requests.get(request_url, auth=(username, password), verify=False)
+       if response.ok:
+            print "\n \t \t GET api call succeeded"
+       else:
+            print response.json()
+            exit(exit_code)
+    return {'data': response.json()}
+
 
 def publish_rhel7cv():
- URL=BASEURL+APIURL
- # where 'X' represents actual if for RHEL 7 content view
- ID="/katello/api/content_views/X/publish"
- POSTURL=BASEURL+ID
- HEADERS={"Content-Type": "application/json"}
+ ID="/katello/api/content_views/7/publish"
+ request_url = BASEURL+ID
 
 # Publish a content view
  print("\n \t \t Publishing Process of RHEL 7 content view begins...\n")
- r = requests.post(POSTURL, auth=(USERNAME, PASSWORD), headers=HEADERS)
- #print(r.text)
+ response = call_api(request_url, "POST")
+
 
 # command to get the last occurrence of content view Publish\
 # before entering while loop
@@ -51,134 +86,63 @@ def publish_rhel7cv():
  OUTPUT=CMD_OUTPUT.strip()
 
  while OUTPUT == STATE:
-  print("\n \t \t Publishing RHEL 7 content view still in progress, sleeping for next 1 min...\n")
+  print("\n \t \t Publishing RHEL 7 content view still in progress, please wait...\n")
   CMD = subprocess.Popen("hammer task list| grep -m1 'Publish content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   CMD_OUTPUT = CMD.stdout.read()
   OUTPUT=CMD_OUTPUT.strip()
   time.sleep(60)
  else:
    print("\n \t \t Publishing completed, moving to next step...\n")
-   response=requests.get(URL, auth=(USERNAME, PASSWORD), headers=HEADERS)
-   data=response.json()
-#   print(json.dumps(data, indent=4))
+   request_url = BASEURL+APIURL
+   response = call_api(request_url)
+   data=response['data']
    for result in data["results"]:
-    #print(result["label"])
      if result["label"] == RHEL:
       version = result["latest_version"]
-      print("\n \t \t Printing latest content version going to be referred:")
-      print(version)
+      print("\n \t \t Printing latest content version going to be referred:  " + str(version))
       for value in result["versions"]:
        if value["version"] == version:
         version_id = value["id"]
-        print("\n \t \t Printing latest version id which is going to be used for Promoting environments:")
-        print(version_id)
-        return promote_test_env(version_id)
+        print("\n \t \t Printing latest version id which is going to be used for Promoting environments:  " + str(version_id))
+        return promote_env(version_id)
 
-def promote_test_env(version_id):
+def get_env_info(ID,COUNTER):
+    request_url = BASEURL+APIURL
+    response = call_api(request_url)
+    data=response['data']
+    for result in data["results"]:
+     for env in result["environments"]:
+      if env["id"] == ID[COUNTER]:
+       print("\n \t \t Environment Id is:  " + str(ID[COUNTER]))
+       print("\n \t \t Promoting of  "  + env["name"] + "  begins...\n")
+
+
+def promote_env(version_id):
  CV_VERSION_ID=version_id
- #print(CV_VERSION_ID)
- APIURL1="/katello/api/content_view_versions/" + str(CV_VERSION_ID) + "/promote"
- URL=BASEURL+APIURL
- POSTURL=BASEURL+APIURL1
- # Where replace 'X' with actual value of environment ID
- ID=X   
- PARAMS={'environment_ids':ID}
- print("\n \t \t Promoting of Test Env begins...\n")
- HEADERS={"Content-Type": "application/json"}
- r = requests.post(POSTURL, auth=(USERNAME, PASSWORD), params=PARAMS, headers=HEADERS)
- #print(r.text)
- CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
- CMD_OUTPUT = CMD.stdout.read()
- OUTPUT=CMD_OUTPUT.strip()
- while OUTPUT == STATE:
-  print("\n \t \t Promoting Test Env still in progress, sleeping for next 30 seconds...\n")
+ APIURL="/katello/api/content_view_versions/" + str(CV_VERSION_ID) + "/promote"
+ ID=[11,12,13,15]
+ LEN=len(ID)
+ COUNTER=0
+ while COUNTER < LEN:
+  params = {'environment_ids': ID[COUNTER]}
+  get_env_info(ID,COUNTER)
+  request_url = BASEURL+APIURL
+  r = call_api(request_url, "POST",params)
+  print(r['data'])
   CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   CMD_OUTPUT = CMD.stdout.read()
   OUTPUT=CMD_OUTPUT.strip()
-  time.sleep(30)
+  while OUTPUT == STATE:
+   print("\n \t \t Promoting still in progress for current environment, please wait...\n")
+   CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+   CMD_OUTPUT = CMD.stdout.read()
+   OUTPUT=CMD_OUTPUT.strip()
+   time.sleep(30)
+  else:
+   print("\n \t \t Promoting completed for current environment, moving on to the next environment...\n")
+   COUNTER = COUNTER + 1
  else:
-  print("\n \t \t Promoting of Test Env completed, moving on to Development Env...\n")
-  return promote_dev_env(CV_VERSION_ID)
-
-
-
-def promote_dev_env(version_id):
- CV_VERSION_ID=version_id
- #print(CV_VERSION_ID)
- APIURL1="/katello/api/content_view_versions/" + str(CV_VERSION_ID) + "/promote"
- URL=BASEURL+APIURL
- POSTURL=BASEURL+APIURL1
- # Where replace 'X' with actual value of environment ID
- ID=X
- PARAMS={'environment_ids':ID}
- print("\n \t \t Promoting of Development Env begins...\n")
- HEADERS={"Content-Type": "application/json"}
- r = requests.post(POSTURL, auth=(USERNAME, PASSWORD), params=PARAMS, headers=HEADERS)
- #print(r.text)
- CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
- CMD_OUTPUT = CMD.stdout.read()
- OUTPUT=CMD_OUTPUT.strip()
- while OUTPUT == STATE:
-  print("\n \t \t Promoting Development Env still in progress, sleeping for next 30 seconds...\n")
-  CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-  CMD_OUTPUT = CMD.stdout.read()
-  OUTPUT=CMD_OUTPUT.strip()
-  time.sleep(30)
- else:
-  print("\n \t \t Promoting of Development Env completed, moving on to PreProduction Env...\n")
-  return promote_preprod_env(CV_VERSION_ID)
-
-
-def promote_preprod_env(version_id):
- CV_VERSION_ID=version_id
- #print(CV_VERSION_ID)
- APIURL1="/katello/api/content_view_versions/" + str(CV_VERSION_ID) + "/promote"
- URL=BASEURL+APIURL
- POSTURL=BASEURL+APIURL1
- # Where replace 'X' with actual value of environment ID
- ID=
- PARAMS={'environment_ids':ID}
- print("\n \t \t Promoting of PreProduction Env begins...\n")
- HEADERS={"Content-Type": "application/json"}
- r = requests.post(POSTURL, auth=(USERNAME, PASSWORD), params=PARAMS, headers=HEADERS)
- #print(r.text)
- CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
- CMD_OUTPUT = CMD.stdout.read()
- OUTPUT=CMD_OUTPUT.strip()
- while OUTPUT == STATE:
-  print("\n \t \t Promoting PreProduction Env still in progress, sleeping for next 30 seconds...\n")
-  CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-  CMD_OUTPUT = CMD.stdout.read()
-  OUTPUT=CMD_OUTPUT.strip()
-  time.sleep(30)
- else:
-  print("\n \t \t Promoting of PreProduction Env completed, moving on to Production Env...\n")
-  return promote_prod_env(CV_VERSION_ID)
-
-def promote_prod_env(version_id):
- CV_VERSION_ID=version_id
- #print(CV_VERSION_ID)
- APIURL1="/katello/api/content_view_versions/" + str(CV_VERSION_ID) + "/promote"
- URL=BASEURL+APIURL
- POSTURL=BASEURL+APIURL1
- # Where replace 'X' with actual value of environment ID
- ID=X
- PARAMS={'environment_ids':ID}
- print("\n \t \t Promoting of Production Env begins...\n")
- HEADERS={"Content-Type": "application/json"}
- r = requests.post(POSTURL, auth=(USERNAME, PASSWORD), params=PARAMS, headers=HEADERS)
- #print(r.text)
- CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
- CMD_OUTPUT = CMD.stdout.read()
- OUTPUT=CMD_OUTPUT.strip()
- while OUTPUT == STATE:
-  print("\n \t \t Promoting Production env still in progress, sleeping for next 30 seconds...\n")
-  CMD = subprocess.Popen("hammer task list| grep -m1 'Promote content_view'| cut -d'|' -f3", shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-  CMD_OUTPUT = CMD.stdout.read()
-  OUTPUT=CMD_OUTPUT.strip()
-  time.sleep(30)
- else:
-  print("\n \t \t Promoting of Production Env completed, all Env promoted successfully.\n")
+   print("\n\n \t \t All environment patched")
 
 
 def main():
